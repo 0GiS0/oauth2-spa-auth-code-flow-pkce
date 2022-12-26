@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet"
+        integrity="sha384-GLhlTQ8iRABdZLl6O3oVMWSktQOp6b7In1Zl3/Jr59b6EGGoI1aFkw7cmDA6j6gD" crossorigin="anonymous">
+
+    <link rel="stylesheet" href="/css/styles.css">
+
+    <!-- Prism.js for code formatting-->
+    <link rel="stylesheet" href="/css/prism.css">
+    <script src="/js/prism.js"></script>
+
+    <title>OAuth 2.0 - SPA with Auth Code Flow and PKCE</title>
+</head>
+
+<body>
+    <div class="container" style="margin-top:50px">
+        <div class="jumbotron">
+            <h2 class="display-4">
+                OAuth 2.0 - SPA with Auth Code Flow and PKCE
+            </h2>
+            <p class="lead">For client-side apps.</p>
+        </div>
+        <!--Stepper from Codepen: https://codepen.io/thdeux/pen/zBGNrM-->
+        <div class="md-stepper-horizontal orange">
+            <div id="step-circle-1" class="md-step active">
+                <a href="/">
+                    <div class="md-step-circle"><span>1</span></div>
+                </a>
+                <div class="md-step-title">Generate code verifier and code challenge</div>
+                <div class="md-step-bar-left"></div>
+                <div class="md-step-bar-right"></div>
+            </div>
+            <div id="step-circle-2" class="md-step">
+                <div class="md-step-circle"><span>2</span></div>
+                <div class="md-step-title">Get authorization code using code challenge</div>
+                <div class="md-step-bar-left"></div>
+                <div class="md-step-bar-right"></div>
+            </div>
+            <div id="step-circle-3" class="md-step">
+                <div class="md-step-circle"><span>3</span></div>
+                <div class="md-step-title">Change authorization code + code verifier for a token</div>
+                <div class="md-step-bar-left"></div>
+                <div class="md-step-bar-right"></div>
+            </div>
+            <div id="step-circle-4" class="md-step">
+                <div class="md-step-circle"><span>4</span></div>
+                <div class="md-step-title">Call Microsoft Graph with the access token</div>
+                <div class="md-step-bar-left"></div>
+                <div class="md-step-bar-right"></div>
+            </div>
+        </div>
+        <div class="row">
+            <div class="col" id="step-1">
+                <div class="card text-center">
+                    <div class="card-header">
+                        Generate code verifier and code challenge
+                    </div>
+                    <div class="card-body">
+                        <p>Code verifier:</p>
+                        <pre class="language-plain" id="code_verifier"></pre>
+                        <p>Code challenge:</p>
+                        <pre class="language-plain" id="code_challenge"></pre>
+                        <a id="login" href="#" class="btn btn-primary">Go to the authorization server</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col" id="step-2">
+                <div class="card text-center">
+                    <div class="card-header">
+                        Get authorization code
+                    </div>
+                    <div class="card-body">
+                        <p>Code:</p>
+                        <pre class="language-plain" id="code"></pre>
+                        <a id="btnExchangeCodeForAccessToken" href="#" class="btn btn-primary">Exchange code for access
+                            token</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col" id="step-3">
+                <div class="card text-center">
+                    <div class="card-header">
+                        Access token
+                    </div>
+                    <div class="card-body">
+                        <p>Code:</p>
+                        <pre class="language-plain" id="access_token"></pre>
+                        <a id="btnCallAPI" href="#" class="btn btn-primary">Call MS Graph</a>
+                    </div>
+                </div>
+            </div>
+            <div class="col" id="step-4">
+                <div class="card text-center">
+                    <div class="card-header">
+                        API result
+                    </div>
+                    <div class="card-body">
+                        <pre class="language-plain" id="result"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+
+        function id(elem) {
+            return document.getElementById(elem);
+        }
+
+        function activeStep(stepNumber) {
+            let steps = ['1', '2', '3', '4'];
+
+            id(`step-${stepNumber}`).style.display = 'block';
+            id(`step-circle-${stepNumber}`).classList.add('active');
+
+            steps.forEach(element => {
+                if (element != stepNumber) {
+                    id(`step-${element}`).style.display = 'none';
+                }
+            });
+        }
+
+        /* 1. Generate verifier */
+        function generateRandomString(length) {
+            var text = "";
+            var possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+            for (var i = 0; i < length; i++) {
+                text += possible.charAt(Math.floor(Math.random() * possible.length));
+            }
+
+            return text;
+        }
+
+        /* 2. Hashing the verifier */
+        async function generateCodeChallenge(codeVerifier) {
+            var digest = await crypto.subtle.digest("SHA-256",
+                new TextEncoder().encode(codeVerifier));
+
+            return btoa(String.fromCharCode(...new Uint8Array(digest)))
+                .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_')
+        }
+
+        (async () => {
+
+            const TENANT_ID = 'e26de2cd-b981-4ec4-a628-95cb1e11debf';
+            const CLIENT_ID = '4a936792-3305-4650-858a-40bb43a407f8';
+            const SCOPE = 'https://graph.microsoft.com/User.Read';
+
+            // Try to get the code from the query string
+            const urlParams = new URLSearchParams(window.location.search);
+
+            let code = urlParams.get('code');
+
+            if (!code) {
+
+                activeStep('1');
+
+                let state = generateRandomString(12);
+                let code_verifier = generateRandomString(128);
+
+                /* Storing the verifier */
+                window.sessionStorage.setItem("code_verifier", code_verifier);
+
+                let code_challenge = await generateCodeChallenge(code_verifier);
+
+                //https://example-app.com/pkce
+                id('code_verifier').innerText = code_verifier;
+                id('code_challenge').innerText = code_challenge;
+
+                const url = `
+                    https://login.microsoftonline.com/${TENANT_ID}/oauth2/authorize?client_id=${CLIENT_ID}
+                    &response_type=code
+                    &state=${state}
+                    &code_challenge=${code_challenge}
+                    &code_challenge_method=S256
+                    &redirect_uri=http://localhost:8000
+                    &scope=${SCOPE}`;
+
+                document.getElementById('login').setAttribute('href', url);
+
+            }
+            else {
+
+                activeStep('2');
+
+                id('code').innerText = code;
+
+                id('btnExchangeCodeForAccessToken').addEventListener('click', () => {
+                    let body = `grant_type=authorization_code&code=${code}
+                    &redirect_uri=${encodeURIComponent('http://localhost:8000')}
+                    &client_id=${CLIENT_ID}
+                    &code_verifier=${window.sessionStorage.getItem('code_verifier')}
+                    &scope=${encodeURIComponent(SCOPE)}`;
+
+                    fetch(`https://login.microsoftonline.com/${TENANT_ID}/oauth2/v2.0/token`,
+                        {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/x-www-form-urlencoded'
+                            },
+                            body: body
+                        }
+
+                    ).then(response => response.json())
+                        .then((response) => {
+                            activeStep('3');
+
+                            window.sessionStorage.setItem('access_token', response.access_token);
+
+                            id('access_token').innerHTML = JSON.stringify(response, undefined, 2);;
+
+                            id('btnCallAPI').addEventListener('click', () => {
+
+                                activeStep('4');
+
+                                var result = document.getElementById('result');
+
+                                const Microsoft_Graph_Endpoint = 'https://graph.microsoft.com/beta';
+                                const Acction_That_I_Have_Access_Because_Of_My_Scope = '/me';
+
+                                fetch(`${Microsoft_Graph_Endpoint}${Acction_That_I_Have_Access_Because_Of_My_Scope}`, {
+                                    headers: {
+                                        'Authorization': `Bearer ${window.sessionStorage.getItem('access_token')}`
+                                    }
+                                }).then(async response => {
+
+                                    let json = await response.json();
+                                    result.innerHTML = JSON.stringify(json, undefined, 2);
+
+                                }).catch(error => {
+                                    result.innerHTML = JSON.stringify(json, undefined, 2);
+                                    console.error(error);
+                                });
+                            });
+
+                        });
+
+                });
+            }
+
+        })();
+
+    </script>
+</body>
+
+</html>
